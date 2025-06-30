@@ -1,15 +1,13 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 
 app = FastAPI()
 
-class Consulta(BaseModel):
-    consulta: str
-
 @app.get("/")
-def status():
-    return {"status": "API online"}
+def raiz():
+    return {"mensagem": "API funcionando"}
 
-@app.post("/buscar")
-def buscar_jurisprudencias(consulta: Consulta):
-    return {"consulta_recebida": consulta.consulta}
+@app.post("/buscar-jurisprudencia")
+async def buscar_jurisprudencias(request: Request):
+    dados = await request.json()
+    consulta = dados.get("consulta", "não informado")
+    return {"consulta_recebida": consulta}
