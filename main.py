@@ -1,20 +1,15 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+class Consulta(BaseModel):
+    consulta: str
 
 @app.get("/")
-def root():
+def status():
     return {"status": "API online"}
 
-@app.get("/jurisprudencias")
-def buscar_jurisprudencias(consulta: str):
-    return {"consulta_recebida": consulta}
+@app.post("/buscar")
+def buscar_jurisprudencias(consulta: Consulta):
+    return {"consulta_recebida": consulta.consulta}
