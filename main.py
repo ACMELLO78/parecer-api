@@ -6,7 +6,8 @@ import docx
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from google.oauth2.credentials import Credentials
+# AQUI ESTÁ A MUDANÇA: importamos a classe correta para Contas de Serviço
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from sentence_transformers import SentenceTransformer, util
@@ -17,24 +18,17 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- Carregando Chaves e Modelos de IA ---
-# Chaves para a Busca Externa (Jusbrasil)
 SEARCH_API_KEY = os.getenv('GOOGLE_API_KEY')
 SEARCH_ENGINE_ID = os.getenv('SEARCH_ENGINE_ID')
+DRIVE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
-# Carrega o modelo de IA para a busca semântica (pode demorar um pouco na primeira vez que o servidor liga)
 print("Carregando modelo de IA para busca semântica...")
 semantic_model = SentenceTransformer('google/mobilebert-uncased')
 print("Modelo de IA carregado.")
 
 # --- Criação do Aplicativo FastAPI ---
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # --- Funções Auxiliares ---
 def ler_texto_docx(file_stream):
@@ -59,10 +53,7 @@ def buscar_jurisprudencia_externa(q: str):
     try:
         service = build("customsearch", "v1", developerKey=SEARCH_API_KEY)
         res = service.cse().list(q=q, cx=SEARCH_ENGINE_ID, num=5).execute()
-        resultados = [
-            {"titulo": item.get('title'), "link": item.get('link'), "resumo": item.get('snippet')}
-            for item in res.get('items', [])
-        ]
+        resultados = [{"titulo": item.get('title'), "link": item.get('link'), "resumo": item.get('snippet')} for item in res.get('items', [])]
         return {"mensagem": f"{len(resultados)} resultados encontrados.", "resultados": resultados}
     except Exception as e:
         logger.error(f"Erro na busca externa: {e}", exc_info=True)
@@ -72,18 +63,17 @@ def buscar_jurisprudencia_externa(q: str):
 @app.get("/buscar_no_meu_acervo")
 def buscar_no_acervo_pessoal(q: str):
     logger.info(f"Recebido pedido para busca interna: '{q}'")
-    # Chave para a Busca Interna (Google Drive)
-    DRIVE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
     if not DRIVE_CREDENTIALS_JSON:
         raise HTTPException(status_code=500, detail="Credenciais do Google Drive não configuradas no servidor.")
-
+    
     try:
-        # Carrega as credenciais a partir do texto JSON salvo na variável de ambiente
+        # AQUI ESTÁ A CORREÇÃO FINAL: Usando o método correto para Contas de Serviço
         creds_info = json.loads(DRIVE_CREDENTIALS_JSON)
-        creds = Credentials.from_authorized_user_info(info=creds_info)
+        SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+        creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
 
-        # A lógica é a mesma que testamos no Colab...
+        # A lógica de busca continua a mesma...
         folder_name = 'Acervo_IA'
         query_folder = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
         results_folder = service.files().list(q=query_folder, pageSize=1, fields="files(id)").execute()
@@ -91,7 +81,7 @@ def buscar_no_acervo_pessoal(q: str):
 
         if not items_folder:
             return {"mensagem": f"A pasta de acervo '{folder_name}' não foi encontrada.", "resultados": []}
-
+        
         folder_id = items_folder[0]['id']
         query_files = f"'{folder_id}' in parents and trashed=false"
         results_files = service.files().list(q=query_files, fields="files(id, name, mimeType)").execute()
@@ -100,8 +90,6 @@ def buscar_no_acervo_pessoal(q: str):
         if not items_files:
             return {"mensagem": "Nenhum arquivo encontrado no acervo.", "resultados": []}
 
-        # Por simplicidade, vamos processar e buscar no primeiro arquivo .docx encontrado
-        documento_encontrado = False
         for item in items_files:
             if 'vnd.openxmlformats-officedocument.wordprocessingml.document' in item['mimeType']:
                 request = service.files().get_media(fileId=item['id'])
@@ -110,28 +98,20 @@ def buscar_no_acervo_pessoal(q: str):
                 done = False
                 while not done: status, done = downloader.next_chunk()
                 file_stream.seek(0)
-
+                
                 texto_documento = ler_texto_docx(file_stream)
                 fatias = fatiar_texto(texto_documento)
                 vetores = semantic_model.encode(fatias, convert_to_tensor=True)
-
+                
                 vetor_pergunta = semantic_model.encode(q, convert_to_tensor=True)
                 similaridades = util.cos_sim(vetor_pergunta, vetores)[0]
                 top_resultados = torch.topk(similaridades, k=3)
-
-                resultados_finais = []
-                for score, idx in zip(top_resultados[0], top_resultados[1]):
-                    resultados_finais.append({
-                        "trecho_relevante": fatias[idx],
-                        "similaridade": score.item(),
-                        "documento_fonte": item['name']
-                    })
-
-                documento_encontrado = True
+                
+                resultados_finais = [{"trecho_relevante": fatias[idx], "similaridade": score.item(), "documento_fonte": item['name']} for score, idx in zip(top_resultados[0], top_resultados[1])]
+                
                 return {"mensagem": "Busca no acervo concluída.", "resultados": resultados_finais}
 
-        if not documento_encontrado:
-             return {"mensagem": "Nenhum arquivo .docx encontrado no acervo para análise.", "resultados": []}
+        return {"mensagem": "Nenhum arquivo .docx encontrado no acervo para análise.", "resultados": []}
 
     except Exception as e:
         logger.error(f"Erro na busca interna: {e}", exc_info=True)
