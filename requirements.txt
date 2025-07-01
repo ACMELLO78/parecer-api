@@ -2,4 +2,9 @@ fastapi
 uvicorn
 gunicorn
 google-api-python-client
+google-auth-oauthlib
 python-dotenv
+sentence-transformers
+pandas
+python-docx
+torch
