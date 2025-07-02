@@ -1,0 +1,38 @@
+openapi: 3.1.0
+info:
+  title: API de Jurisprudência (JusBrasil)
+  description: Busca jurisprudências em tempo real com base em palavras-chave, integrável com GPTs personalizados via Custom Actions.
+  version: 1.0.0
+servers:
+  - url: https://web-production-7674.up.railway.app
+    description: Railway deploy (produção)
+
+paths:
+  /jurisprudencias:
+    get:
+      operationId: buscarJurisprudencias
+      summary: Buscar jurisprudências por tema ou palavra-chave
+      description: Realiza scraping do JusBrasil e retorna até 5 jurisprudências recentes relacionadas ao termo buscado.
+      parameters:
+        - name: consulta
+          in: query
+          required: true
+          description: Tema ou palavra-chave jurídica a ser buscada.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista de jurisprudências encontradas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    titulo:
+                      type: string
+                    ementa:
+                      type: string
+                    link:
+                      type: string
